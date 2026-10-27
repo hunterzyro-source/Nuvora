@@ -1,4 +1,5 @@
 node_modules/
+backend-api/
 dist/
 server/community.sqlite
 server/community.sqlite-shm
