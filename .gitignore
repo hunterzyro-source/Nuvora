@@ -1,0 +1,12 @@
+node_modules/
+dist/
+server/community.sqlite
+server/community.sqlite-shm
+server/community.sqlite-wal
+.env
+.env.*
+!.env.example
+.vercel/
+*.log
+__pycache__/
+*.py[cod]

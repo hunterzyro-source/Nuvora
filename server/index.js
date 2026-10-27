@@ -1,0 +1,30 @@
+import express from 'express';
+import cors from 'cors';
+import http from 'node:http';
+import { Server } from 'socket.io';
+import Database from 'better-sqlite3';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { networkInterfaces } from 'node:os';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const db = new Database(process.env.DATABASE_PATH || path.join(here, 'community.sqlite'));
+db.pragma('journal_mode = WAL');
+db.exec(`CREATE TABLE IF NOT EXISTS channels(id TEXT PRIMARY KEY,name TEXT NOT NULL,type TEXT NOT NULL DEFAULT 'text',category TEXT NOT NULL DEFAULT 'Geral',created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,channel_id TEXT NOT NULL,author TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS members(name TEXT PRIMARY KEY,color TEXT NOT NULL,joined_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
+if (!db.prepare('SELECT count(*) n FROM channels').get().n) {
+  const add = db.prepare('INSERT INTO channels(id,name,type,category) VALUES(?,?,?,?)');
+  [['geral','geral','text','CANAIS DE TEXTO'],['apresentacoes','apresentações','text','CANAIS DE TEXTO'],['trabalho','trabalho','text','CANAIS DE TEXTO'],['salinha','Salinha','voice','CANAIS DE VOZ'],['reuniao','Reunião','voice','CANAIS DE VOZ']].forEach(x=>add.run(...x));
+}
+const app=express(), server=http.createServer(app);const allowedOrigins=(process.env.CORS_ORIGIN||'').split(',').map(x=>x.trim()).filter(Boolean);const corsOrigin=allowedOrigins.length?allowedOrigins:true;const io=new Server(server,{cors:{origin:corsOrigin}});
+app.use(cors({origin:corsOrigin})); app.use(express.json({limit:'100kb'}));
+app.get('/api/bootstrap',(req,res)=>{const ips=Object.values(networkInterfaces()).flat().filter(x=>x&&!x.internal&&x.family==='IPv4').map(x=>x.address);const lan=ips.find(x=>/^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\./.test(x))||ips[0];const incoming=new URL(`http://${req.headers.host||`localhost:${port}`}`);const host=['localhost','127.0.0.1'].includes(incoming.hostname)?lan||incoming.hostname:incoming.hostname;const invitePort=incoming.port||String(port);res.json({channels:db.prepare('SELECT * FROM channels ORDER BY rowid').all(),members:db.prepare('SELECT name,color FROM members').all(),inviteUrl:`http://${host}:${invitePort}`})});
+app.post('/api/channels',(req,res)=>{const {name,type='text',category}=req.body||{}; if(!name?.trim())return res.status(400).json({error:'Dê um nome ao canal.'}); const id=name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-')+'-'+Math.random().toString(36).slice(2,6); const ch={id,name:name.trim().slice(0,40),type:type==='voice'?'voice':'text',category:category||(type==='voice'?'CANAIS DE VOZ':'CANAIS DE TEXTO')};db.prepare('INSERT INTO channels(id,name,type,category) VALUES(?,?,?,?)').run(ch.id,ch.name,ch.type,ch.category);io.emit('channels:changed');res.status(201).json(ch)});
+app.get('/api/messages/:channel',(req,res)=>res.json(db.prepare('SELECT * FROM messages WHERE channel_id=? ORDER BY id DESC LIMIT 100').all(req.params.channel).reverse()));
+app.post('/api/messages',(req,res)=>{const {channel_id,author,content}=req.body||{};if(!channel_id||!author||!content?.trim())return res.status(400).json({error:'Mensagem inválida.'}); const m=db.prepare('INSERT INTO messages(channel_id,author,content) VALUES(?,?,?)').run(channel_id,author.trim().slice(0,32),content.trim().slice(0,4000));const msg=db.prepare('SELECT * FROM messages WHERE id=?').get(m.lastInsertRowid);io.to(`channel:${channel_id}`).emit('message:new',msg);res.status(201).json(msg)});
+app.post('/api/members',(req,res)=>{const {name,color='#a78bfa'}=req.body||{};if(!name?.trim())return res.status(400).json({error:'Nome necessário.'});db.prepare('INSERT INTO members(name,color) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET color=excluded.color').run(name.trim().slice(0,32),color);io.emit('members:changed');res.json({ok:true})});
+app.delete('/api/members/:name',(req,res)=>{db.prepare('DELETE FROM members WHERE name=?').run(req.params.name);io.emit('members:changed');res.json({ok:true})});
+io.on('connection',socket=>{socket.on('identify',({name,status})=>{socket.data.name=String(name||'Visitante').slice(0,32);socket.data.status=status||'Disponível';io.emit('presence:update',presence())});socket.on('channel:join',id=>{for(const room of socket.rooms)if(room.startsWith('channel:'))socket.leave(room);socket.join(`channel:${id}`)});socket.on('call:join',({channel,name})=>{socket.data.name=name||'Visitante';socket.join(`call:${channel}`);socket.to(`call:${channel}`).emit('call:peer-joined',{id:socket.id,name:socket.data.name});socket.emit('call:peers',Array.from(io.sockets.adapter.rooms.get(`call:${channel}`)||[]).filter(x=>x!==socket.id).map(id=>({id,name:io.sockets.sockets.get(id)?.data.name||'Participante'})));io.to(`call:${channel}`).emit('call:roster',roster(channel))});socket.on('call:leave',channel=>{socket.to(`call:${channel}`).emit('call:peer-left',{id:socket.id});socket.leave(`call:${channel}`);io.to(`call:${channel}`).emit('call:roster',roster(channel))});for(const event of ['rtc:offer','rtc:answer','rtc:ice'])socket.on(event,({to,...data})=>io.to(to).emit(event,{from:socket.id,...data}));socket.on('disconnect',()=>io.emit('presence:update',presence()))});
+function roster(channel){return Array.from(io.sockets.adapter.rooms.get(`call:${channel}`)||[]).map(id=>({id,name:io.sockets.sockets.get(id)?.data.name||'Participante'}))}function presence(){return [...new Set([...io.sockets.sockets.values()].map(s=>s.data.status==='Invisível'?null:s.data.name).filter(Boolean))]}
+const port=Number(process.env.PORT||3001);const dist=path.join(here,'..','dist');app.use(express.static(dist));app.get('/{*path}',(req,res,next)=>req.path.startsWith('/api/')?next():res.sendFile(path.join(dist,'index.html')));server.listen(port,'0.0.0.0',()=>console.log(`Servidor disponível na porta ${port}`));
