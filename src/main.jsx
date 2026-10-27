@@ -15,7 +15,90 @@ useEffect(()=>{messagesEnd.current?.scrollIntoView({behavior:'smooth'})},[messag
 const send=async e=>{e.preventDefault();if(!input.trim()||!channel||!name){if(!name)setNotice('Defina seu nome nas configurações para enviar mensagens.');return}const content=replyTo?`> ${replyTo.author}: ${replyTo.content.split('\n')[0]}\n${input}`:input;setInput('');setReplyTo(null);await apiFetch(api('/api/messages'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel_id:channel.id,author:name,content})})};
 const leaveCall=()=>{if(activeCall.current)socket.emit('call:leave',activeCall.current);activeCall.current=null;Object.values(pcs.current).forEach(pc=>pc.close());pcs.current={};if(localStream)localStream.getTracks().forEach(t=>t.stop());setLocalStream(null);setRemoteStreams({});setCall(false);setSharing(false);setCamera(false);setDeafened(false)};
 const joinCall=async()=>{if(!name){setNotice('Defina seu nome nas configurações para entrar na chamada.');return}activeCall.current=channel.id;try{const s=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:preferences.echoCancellation,noiseSuppression:preferences.noiseSuppression,autoGainControl:true,...(preferences.inputDevice?{deviceId:{exact:preferences.inputDevice}}:{})},video:false});setLocalStream(s);setMuted(false)}catch(e){setNotice(e.name==='NotAllowedError'?'Microfone sem permissão. Você poderá ouvir a chamada e liberar o microfone depois.':'Microfone indisponível. Você poderá ouvir a chamada.')}setCall(true);socket.emit('call:join',{channel:channel.id,name})};
-useEffect(()=>{if(!call||!channel)return;const ice={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]};const create=async(id,offer)=>{const pc=new RTCPeerConnection(ice);pcs.current[id]=pc;pc.pendingIce=[];if(localStream)localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));else pc.addTransceiver('audio',{direction:'recvonly'});pc.onicecandidate=e=>e.candidate&&socket.emit('rtc:ice',{to:id,candidate:e.candidate});pc.ontrack=e=>setRemoteStreams(previous=>{const stream=e.streams?.[0]||new MediaStream([...new Set([...(previous[id]?.getTracks?.()||[]),e.track])]);return {...previous,[id]:stream}});pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed')setNotice('Falha de conexão direta. Configure um servidor TURN para chamadas em redes restritas.')};pc.onnegotiationneeded=async()=>{if(!offer||pc.signalingState!=='stable')return;try{const d=await pc.createOffer();await pc.setLocalDescription(d);socket.emit('rtc:offer',{to:id,description:d})}catch{}};if(offer){const d=await pc.createOffer();await pc.setLocalDescription(d);socket.emit('rtc:offer',{to:id,description:d})}return pc};const peer=({id})=>create(id,false),peers=items=>items.forEach(({id})=>create(id,true));const onOffer=async({from,description})=>{const pc=await create(from,false);await pc.setRemoteDescription(description);for(const c of pc.pendingIce.splice(0))await pc.addIceCandidate(c).catch(()=>{});const d=await pc.createAnswer();await pc.setLocalDescription(d);socket.emit('rtc:answer',{to:from,description:d})};const onAnswer=({from,description})=>pcs.current[from]?.setRemoteDescription(description);const onIce=({from,candidate})=>{const pc=pcs.current[from];if(!pc)return;if(pc.remoteDescription)pc.addIceCandidate(candidate).catch(()=>{});else pc.pendingIce.push(candidate)};const departed=({id})=>{pcs.current[id]?.close();delete pcs.current[id];setRemoteStreams(p=>{const n={...p};delete n[id];return n})};socket.on('call:peer-joined',peer);socket.on('call:peers',peers);socket.on('rtc:offer',onOffer);socket.on('rtc:answer',onAnswer);socket.on('rtc:ice',onIce);socket.on('call:peer-left',departed);return()=>{socket.off('call:peer-joined',peer);socket.off('call:peers',peers);socket.off('rtc:offer',onOffer);socket.off('rtc:answer',onAnswer);socket.off('rtc:ice',onIce);socket.off('call:peer-left',departed)}},[call,active,localStream]);
+useEffect(()=>{
+if(!call||!channel)return;
+const ice={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]};
+const ensurePeer=id=>{
+  if(!id||id===socket.id)return null;
+  let pc=pcs.current[id];
+  if(pc)return pc;
+  pc=new RTCPeerConnection(ice);
+  pcs.current[id]=pc;
+  pc.pendingIce=[];
+  pc.makingOffer=false;
+  pc.ignoreOffer=false;
+  pc.polite=String(socket.id||'')>String(id);
+  if(localStream)localStream.getTracks().forEach(track=>pc.addTrack(track,localStream));
+  else pc.addTransceiver('audio',{direction:'recvonly'});
+  pc.onicecandidate=e=>{if(e.candidate)socket.emit('rtc:ice',{to:id,candidate:e.candidate})};
+  pc.ontrack=e=>setRemoteStreams(previous=>{
+    const stream=e.streams?.[0]||new MediaStream([...new Set([...(previous[id]?.getTracks?.()||[]),e.track])]);
+    return {...previous,[id]:stream};
+  });
+  pc.onnegotiationneeded=async()=>{
+    try{
+      pc.makingOffer=true;
+      await pc.setLocalDescription();
+      socket.emit('rtc:offer',{to:id,description:pc.localDescription});
+    }catch{setNotice('Não foi possível negociar a conexão de voz. Saia e entre novamente na chamada.')}finally{pc.makingOffer=false}
+  };
+  pc.onconnectionstatechange=()=>{
+    if(pc.connectionState==='failed')setNotice('A conexão direta falhou. Verifique a rede ou configure um servidor TURN para chamadas em redes restritas.');
+  };
+  return pc;
+};
+const onPeer=({id}={})=>ensurePeer(id);
+const onPeers=items=>{if(Array.isArray(items))items.forEach(({id}={})=>ensurePeer(id))};
+const flushIce=async pc=>{for(const candidate of pc.pendingIce.splice(0))await pc.addIceCandidate(candidate).catch(()=>{})};
+const onOffer=async({from,description}={})=>{
+  if(!from||!description)return;
+  const pc=ensurePeer(from);
+  if(!pc)return;
+  const collision=description.type==='offer'&&(pc.makingOffer||pc.signalingState!=='stable');
+  pc.ignoreOffer=!pc.polite&&collision;
+  if(pc.ignoreOffer)return;
+  try{
+    if(collision)await pc.setLocalDescription({type:'rollback'});
+    await pc.setRemoteDescription(description);
+    await flushIce(pc);
+    if(description.type==='offer'){
+      await pc.setLocalDescription();
+      socket.emit('rtc:answer',{to:from,description:pc.localDescription});
+    }
+  }catch{setNotice('A negociação da chamada falhou. Saia e entre novamente na chamada.')}
+};
+const onAnswer=async({from,description}={})=>{
+  const pc=pcs.current[from];
+  if(!pc||!description)return;
+  try{await pc.setRemoteDescription(description);await flushIce(pc)}catch{}
+};
+const onIce=async({from,candidate}={})=>{
+  if(!from||!candidate)return;
+  const pc=ensurePeer(from);
+  if(!pc||pc.ignoreOffer)return;
+  if(pc.remoteDescription)await pc.addIceCandidate(candidate).catch(()=>{});
+  else pc.pendingIce.push(candidate);
+};
+const departed=({id}={})=>{
+  pcs.current[id]?.close();
+  delete pcs.current[id];
+  setRemoteStreams(previous=>{const next={...previous};delete next[id];return next});
+};
+socket.on('call:peer-joined',onPeer);
+socket.on('call:peers',onPeers);
+socket.on('rtc:offer',onOffer);
+socket.on('rtc:answer',onAnswer);
+socket.on('rtc:ice',onIce);
+socket.on('call:peer-left',departed);
+return()=>{
+  socket.off('call:peer-joined',onPeer);
+  socket.off('call:peers',onPeers);
+  socket.off('rtc:offer',onOffer);
+  socket.off('rtc:answer',onAnswer);
+  socket.off('rtc:ice',onIce);
+  socket.off('call:peer-left',departed);
+};
+},[call,active,localStream]);
 const media=async({video=false,screen=false,config=shareConfig}={})=>{try{if(screen){const size=config.resolution==='720'?1280:1920;const surfaceOptions=config.source==='tab'?{preferCurrentTab:true,selfBrowserSurface:'include',monitorTypeSurfaces:'exclude'}:config.source==='window'?{preferCurrentTab:false,selfBrowserSurface:'exclude',monitorTypeSurfaces:'exclude'}:{preferCurrentTab:false,selfBrowserSurface:'exclude',monitorTypeSurfaces:'include'};const captured=await navigator.mediaDevices.getDisplayMedia({...surfaceOptions,video:{frameRate:{ideal:Number(config.fps),max:Number(config.fps)},width:{ideal:size},height:{ideal:config.resolution==='720'?720:1080},contentHint:'motion',cursor:'always'},audio:!!config.audio,systemAudio:config.audio?'include':'exclude',surfaceSwitching:'include'});const track=captured.getVideoTracks()[0];track.onended=()=>{captured.getAudioTracks().forEach(t=>t.stop());setSharing(false)};localStream?.getVideoTracks().forEach(t=>t.stop());const s=new MediaStream([...(localStream?.getAudioTracks()||[]),track,...captured.getAudioTracks()]);Object.values(pcs.current).forEach(pc=>{const sender=pc.getSenders().find(x=>x.track?.kind==='video');if(sender)sender.replaceTrack(track);else pc.addTrack(track,s);captured.getAudioTracks().forEach(audioTrack=>pc.addTrack(audioTrack,s));const p=sender?.getParameters?.();if(p?.encodings?.length){p.encodings[0].maxBitrate=Number(config.resolution==='720'?2500:config.fps===60?8000:5000)*1000;p.encodings[0].maxFramerate=Number(config.fps);sender.setParameters(p).catch(()=>{})}});setSharing(true);setLocalStream(s)}else{const audio={echoCancellation:true,noiseSuppression:true,autoGainControl:true,...(preferences.inputDevice?{deviceId:{exact:preferences.inputDevice}}:{})};const captured=await navigator.mediaDevices.getUserMedia({audio:video?false:audio,video:video?{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30},...(preferences.cameraDevice?{deviceId:{exact:preferences.cameraDevice}}:{})}:false});const track=captured.getVideoTracks()[0];if(video&&track){localStream?.getVideoTracks().forEach(t=>t.stop());const s=new MediaStream([...(localStream?.getAudioTracks()||[]),track]);Object.values(pcs.current).forEach(pc=>{const sender=pc.getSenders().find(x=>x.track?.kind==='video');if(sender)sender.replaceTrack(track);else pc.addTrack(track,s)});setLocalStream(s);setCamera(true)}else if(captured.getAudioTracks().length){const s=new MediaStream([...(localStream?.getVideoTracks()||[]),captured.getAudioTracks()[0]]);setLocalStream(s);setMuted(false);Object.values(pcs.current).forEach(pc=>{const sender=pc.getSenders().find(x=>x.track?.kind==='audio');sender?sender.replaceTrack(captured.getAudioTracks()[0]):pc.addTrack(captured.getAudioTracks()[0],s)})}}}catch(e){setNotice(e.name==='NotAllowedError'?'A permissão foi cancelada.':'Não foi possível acessar o dispositivo.')}};
 const toggleMute=()=>{if(!localStream){media();return}const t=localStream.getAudioTracks()[0];if(t){t.enabled=!t.enabled;setMuted(!t.enabled)}else media()};const toggleCamera=()=>{if(camera&&localStream){localStream.getVideoTracks().forEach(t=>t.stop());setCamera(false);return}media({video:true})};const toggleScreen=()=>sharing?(localStream?.getVideoTracks().forEach(t=>t.stop()),setSharing(false)):setShowShareSettings(true);
 const addChannel=async e=>{e.preventDefault();const channelName=newName.trim();if(!channelName)return;try{const r=await apiFetch(api('/api/channels'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:channelName,type:newType})});if(!r.ok)throw new Error('Servidor indisponível');const c=await r.json();if(!c?.id)throw new Error('Resposta inválida');setShowModal(false);setNewName('');setActive(c.id);await load()}catch{const channels=boot.channels.length?boot.channels:[{id:'geral',name:'geral',type:'text',category:'CANAIS DE TEXTO'}];if(channels.some(c=>c.name.toLocaleLowerCase()===channelName.toLocaleLowerCase()&&c.type===newType)){setNotice('Já existe um canal com esse nome e tipo.');return}const c={id:`local-${crypto.randomUUID()}`,name:channelName,type:newType,category:newType==='voice'?'CANAIS DE VOZ':'CANAIS DE TEXTO'};const updated=[...channels,c];localStorage.setItem('community-channels',JSON.stringify(updated));setBoot(previous=>({...previous,channels:updated}));setShowModal(false);setNewName('');setActive(c.id);setNotice('Canal criado neste navegador. Para compartilhar com outras pessoas, conecte um servidor.') }};
