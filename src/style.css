@@ -28,7 +28,10 @@ button:focus-visible,input:focus-visible{outline-color:#c15bfa}
 :root[data-theme=light] .channel.selected{background:#eadcf8;color:#58327f}:root[data-theme=light] .channel.selected>svg:first-child{color:#8f35d1}:root[data-theme=light] .primary{color:white}:root[data-theme=light] .welcome-action{background:#eee1f8;color:#702ca1}
 /* Canal modal: keep every field inside the viewport on compact screens. */
 .modal-backdrop{display:flex;align-items:center;justify-content:center;overflow-y:auto;overscroll-behavior:contain;padding:clamp(10px,3vw,24px)}
-.modal-backdrop>.modal{width:min(410px,100%);min-width:0;max-height:calc(100dvh - 2 * clamp(10px,3vw,24px));overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:clamp(17px,5vw,25px);margin:auto;scrollbar-width:thin;scrollbar-color:#484650 transparent}
+.modal-backdrop>form.modal{display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-auto-rows:max-content;align-content:start;justify-items:stretch;width:min(410px,calc(100vw - 32px))!important;height:auto!important;min-width:0;max-height:calc(100dvh - 2 * clamp(10px,3vw,24px));overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:clamp(17px,5vw,25px);margin:auto;scrollbar-width:thin;scrollbar-color:#484650 transparent}
+.modal-backdrop>form.modal>*:not(.modal-close){width:100%;min-width:0;max-width:100%;justify-self:stretch}
+.modal-backdrop>form.modal>.modal-icon{width:41px;justify-self:start}
+.modal-backdrop>form.modal>.modal-close{width:28px;justify-self:end}
 .modal>*,.modal label,.modal .type-option,.modal .name-field,.modal .modal-actions{min-width:0;max-width:100%}
 .modal h2{margin:12px 0 6px;font-size:clamp(17px,4vw,19px);line-height:1.25;overflow-wrap:anywhere}
 .modal>p{font-size:clamp(10px,2.8vw,11px);line-height:1.55;overflow-wrap:anywhere}
