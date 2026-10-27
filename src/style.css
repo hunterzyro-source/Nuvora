@@ -26,3 +26,18 @@ button:focus-visible,input:focus-visible{outline-color:#c15bfa}
 .primary{background:linear-gradient(115deg,#6922e9 0%,#9230ed 56%,#ca3be9 100%);box-shadow:0 5px 18px #852be64c}.primary:hover{filter:brightness(1.12)}
 .type-option.picked{background:#382343;border-color:#bd65f0a0;color:#edceff}.modal-icon,.share-badge{background:linear-gradient(145deg,#47225f,#312044);color:#dfacff}.name-field>span{color:#bf62f5}.theme-choice.chosen,.source-option.picked{border-color:#b947ee99;background:#382441;color:#f0d7ff}.segmented button.chosen{background:linear-gradient(100deg,#6430a4,#7b2ca7);color:#f7e7ff}.share-modal .settings-overline{color:#cb82f8}
 :root[data-theme=light] .channel.selected{background:#eadcf8;color:#58327f}:root[data-theme=light] .channel.selected>svg:first-child{color:#8f35d1}:root[data-theme=light] .primary{color:white}:root[data-theme=light] .welcome-action{background:#eee1f8;color:#702ca1}
+/* Canal modal: keep every field inside the viewport on compact screens. */
+.modal-backdrop{display:flex;align-items:center;justify-content:center;overflow-y:auto;overscroll-behavior:contain;padding:clamp(10px,3vw,24px)}
+.modal-backdrop>.modal{width:min(410px,100%);min-width:0;max-height:calc(100dvh - 2 * clamp(10px,3vw,24px));overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:clamp(17px,5vw,25px);margin:auto;scrollbar-width:thin;scrollbar-color:#484650 transparent}
+.modal>*,.modal label,.modal .type-option,.modal .name-field,.modal .modal-actions{min-width:0;max-width:100%}
+.modal h2{margin:12px 0 6px;font-size:clamp(17px,4vw,19px);line-height:1.25;overflow-wrap:anywhere}
+.modal>p{font-size:clamp(10px,2.8vw,11px);line-height:1.55;overflow-wrap:anywhere}
+.modal label{white-space:normal;overflow-wrap:anywhere;line-height:1.4}
+.modal .type-picker{grid-template-columns:repeat(2,minmax(0,1fr));width:100%}
+.modal .type-option{justify-content:flex-start;white-space:normal;overflow-wrap:anywhere}
+.modal .name-field{width:100%}
+.modal .name-field input{width:100%;min-width:0}
+.modal .modal-actions{flex-wrap:wrap;align-items:center}
+.modal .modal-actions>*{flex:0 0 auto}
+@media(max-width:420px){.modal-backdrop{padding:10px}.modal-backdrop>.modal{max-height:calc(100dvh - 20px)}.modal .modal-actions{gap:6px;margin-top:16px}.modal .modal-actions .primary{padding:9px 10px}.modal .cancel{padding:9px 8px}}
+@media(max-height:520px){.modal-backdrop{align-items:flex-start;padding-top:10px;padding-bottom:10px}.modal-backdrop>.modal{max-height:calc(100dvh - 20px);padding-top:16px;padding-bottom:16px}.modal .modal-icon{width:34px;height:34px}.modal h2{margin-top:8px}.modal>p{margin-bottom:12px}.modal label{margin-top:10px}}
